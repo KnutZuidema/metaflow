@@ -475,6 +475,11 @@ def start(
         # be raised. For resume, since we ignore those options, we ignore the error.
         raise ctx.obj.delayed_config_exception
 
+    # Initialize the phase early so it can be used in the mutators
+    # The phase is determined by which CLI subcommand is being invoked (e.g. "run" → LAUNCH,
+    # "step" → TASK, "batch" → TRAMPOLINE).
+    system_context._update(phase=_phase_from_cli_args(getattr(ctx, "saved_args", None)))
+
     # Init all values in the flow mutators and then process them
     for decorator in ctx.obj.flow._flow_mutators:
         decorator.external_init()
@@ -564,13 +569,7 @@ def start(
 
     decorators._init(ctx.obj.flow)
 
-    # Populate the system context singleton for this process. The phase is
-    # determined by which CLI subcommand is being invoked (e.g. "run" → LAUNCH,
-    # "step" → TASK, "batch" → TRAMPOLINE).
-    saved_args = getattr(ctx, "saved_args", None)
-    phase = _phase_from_cli_args(saved_args)
     system_context._update(
-        phase=phase,
         flow=ctx.obj.flow,
         graph=ctx.obj.graph,
         environment=ctx.obj.environment,
