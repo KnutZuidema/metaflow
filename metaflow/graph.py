@@ -140,10 +140,9 @@ class DAGNode(object):
         self.num_args = len(func_ast.args.args)
         tail = func_ast.body[-1]
 
-        # end doesn't need a transition
-        if self.name == "end":
-            # TYPE: end
-            self.type = "end"
+        # Note: type assignment for start/end steps is handled by
+        # FlowGraph._identify_start_end() based on graph structure,
+        # not by name.
 
         # ensure that the tail an expression
         if not isinstance(tail, ast.Expr):
@@ -212,10 +211,10 @@ class DAGNode(object):
                     self.type = "split"
                     self.invalid_tail_next = False
                 elif len(self.out_funcs) == 1:
-                    # TYPE: linear
-                    if self.name == "start":
-                        self.type = "start"
-                    elif self.num_args > 1:
+                    # TYPE: linear (or join)
+                    # Note: "start" type is assigned later by
+                    # FlowGraph._identify_start_end() based on structure.
+                    if self.num_args > 1:
                         self.type = "join"
                     else:
                         self.type = "linear"
@@ -259,8 +258,60 @@ class FlowGraph(object):
         self.doc = deindent_docstring(flow.__doc__)
         # nodes sorted in topological order.
         self.sorted_nodes = []
+        self._identify_start_end()
         self._traverse_graph()
         self._postprocess()
+
+    def _identify_start_end(self):
+        """
+        Determine the start and end steps from graph structure.
+
+        Start step: the unique node with zero in-degree (no other node
+        transitions to it). End step: the unique node with zero out-degree
+        (it has no self.next() transitions). Internal steps (names starting
+        with '_') are excluded.
+
+        Sets self.start_step and self.end_step to the step name strings,
+        or None if the graph is malformed (validated later by lint).
+        Also assigns the "start" and "end" node types based on structure.
+        """
+        # Compute in-degree from out_funcs (already set by _parse)
+        in_degree = {name: 0 for name in self.nodes}
+        for node in self.nodes.values():
+            for target in node.out_funcs:
+                if target in in_degree:
+                    in_degree[target] += 1
+
+        # Start = zero in-degree (exclude internal steps starting with _)
+        candidates_start = [
+            name
+            for name, deg in in_degree.items()
+            if deg == 0 and not name.startswith("_")
+        ]
+        # End = zero out-degree (exclude internal steps starting with _)
+        candidates_end = [
+            name
+            for name in self.nodes
+            if not self.nodes[name].out_funcs and not name.startswith("_")
+        ]
+
+        self.start_step = candidates_start[0] if len(candidates_start) == 1 else None
+        self.end_step = candidates_end[0] if len(candidates_end) == 1 else None
+
+        # Assign types based on structure.
+        # Only upgrade "linear" → "start" for the entry point; do NOT override
+        # "split", "foreach", etc. since those types are needed for
+        # split/join balance checking.
+        if self.start_step and self.start_step == self.end_step:
+            # Single-step flow: terminal node that is also the entry point
+            self.nodes[self.start_step].type = "end"
+        else:
+            if self.start_step:
+                node = self.nodes[self.start_step]
+                if node.type in (None, "linear"):
+                    node.type = "start"
+            if self.end_step:
+                self.nodes[self.end_step].type = "end"
 
     def _create_nodes(self, flow):
         nodes = {}
@@ -338,8 +389,8 @@ class FlowGraph(object):
                             split_branches + ([n] if add_split_branch else []),
                         )
 
-        if "start" in self:
-            traverse(self["start"], [], [], [])
+        if self.start_step and self.start_step in self:
+            traverse(self[self.start_step], [], [], [])
 
         # fix the order of in_funcs
         for node in self.nodes.values():
@@ -493,9 +544,15 @@ class FlowGraph(object):
                         break
             return resulting_list
 
-        graph_structure = populate_block("start", "end")
+        if self.start_step == self.end_step:
+            # Single-step flow
+            graph_structure = []
+        else:
+            graph_structure = populate_block(self.start_step, self.end_step)
 
-        steps_info["end"] = node_to_dict("end", self.nodes["end"])
-        graph_structure.append("end")
+        steps_info[self.end_step] = node_to_dict(
+            self.end_step, self.nodes[self.end_step]
+        )
+        graph_structure.append(self.end_step)
 
         return steps_info, graph_structure
