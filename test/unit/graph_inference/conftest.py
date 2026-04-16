@@ -32,3 +32,14 @@ single_step_run = pytest.fixture(scope="session")(
 custom_branch_run = pytest.fixture(scope="session")(
     create_flow_fixture("CustomBranchFlow", "custom_branch_flow.py")
 )
+
+stepspec_simple_run = pytest.fixture(scope="session")(
+    create_flow_fixture("StepSpecSimpleFlow", "stepspec_simple_flow.py")
+)
+
+stepspec_init_run = pytest.fixture(scope="session")(
+    create_flow_fixture(
+        "StepSpecInitFlow",
+        "stepspec_init_flow.py",
+    )
+)

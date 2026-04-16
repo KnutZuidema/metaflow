@@ -100,8 +100,9 @@ from .metaflow_current import current
 
 # Flow spec
 from .flowspec import FlowSpec
+from .stepspec import StepSpec
 
-from .parameters import Parameter, JSONTypeClass, JSONType
+from .parameters import Parameter, InitParameter, JSONTypeClass, JSONType
 
 from .user_configs.config_parameters import Config, ConfigValue, config_expr
 from .user_decorators.user_step_decorator import (

@@ -547,6 +547,16 @@ def _base_step_decorator(decotype, *args, **kwargs):
         func = args[0]
         if isinstance(func, (StepMutator, UserStepDecoratorBase)):
             func = func._my_step
+
+        # Step decorator applied to a StepSpec class — attach to synthetic step
+        if isinstance(func, type) and hasattr(func, "_step_spec_step_name"):
+            step_func = getattr(func, func._step_spec_step_name)
+            if hasattr(step_func, "is_step"):
+                step_func.decorators.append(
+                    decotype(attributes=kwargs, statically_defined=True)
+                )
+            return func
+
         if not hasattr(func, "is_step"):
             raise BadStepDecoratorException(decotype.name, func)
 

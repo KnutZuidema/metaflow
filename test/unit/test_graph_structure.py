@@ -11,7 +11,7 @@ Verifies that:
 """
 
 import pytest
-from metaflow import FlowSpec, step
+from metaflow import FlowSpec, step, Parameter
 from metaflow.lint import linter, LintWarn
 
 
@@ -310,3 +310,160 @@ class TestLintWithStructuralInference:
 
     def test_split_start_passes_lint(self):
         linter.run_checks(SplitStartFlow._graph)
+
+
+# ---------------------------------------------------------------------------
+# StepSpec flow definitions
+# ---------------------------------------------------------------------------
+
+from metaflow import StepSpec
+from metaflow.parameters import InitParameter
+
+
+class SimpleStepSpec(StepSpec):
+    text = Parameter("text", type=str, default="hello")
+
+    def call(self):
+        self.output = self.text.upper()
+
+
+class InitCallStepSpec(StepSpec):
+    factor = InitParameter("factor", type=int, default=2)
+    value = Parameter("value", type=int, default=10)
+
+    def init(self):
+        self.computed = self.factor * 10
+
+    def call(self):
+        self.result = self.value * self.computed
+
+
+# ---------------------------------------------------------------------------
+# Tests: StepSpec graph construction
+# ---------------------------------------------------------------------------
+
+
+class TestStepSpecGraph:
+    """Tests for StepSpec graph construction."""
+
+    def test_step_named_after_class(self):
+        graph = SimpleStepSpec._graph
+        assert "simplestepspec" in graph.nodes
+
+    def test_single_step_start_end(self):
+        graph = SimpleStepSpec._graph
+        assert graph.start_step == "simplestepspec"
+        assert graph.end_step == "simplestepspec"
+        assert graph.start_step == graph.end_step
+
+    def test_step_type_is_end(self):
+        graph = SimpleStepSpec._graph
+        assert graph["simplestepspec"].type == "end"
+
+    def test_init_call_graph(self):
+        graph = InitCallStepSpec._graph
+        assert graph.start_step == "initcallstepspec"
+        assert graph.end_step == "initcallstepspec"
+
+    def test_output_steps(self):
+        steps_info, graph_structure = SimpleStepSpec._graph.output_steps()
+        assert "simplestepspec" in steps_info
+        assert graph_structure == ["simplestepspec"]
+
+    def test_passes_lint(self):
+        linter.run_checks(SimpleStepSpec._graph)
+
+    def test_init_call_passes_lint(self):
+        linter.run_checks(InitCallStepSpec._graph)
+
+
+# ---------------------------------------------------------------------------
+# Tests: StepSpec direct invocation
+# ---------------------------------------------------------------------------
+
+
+class TestStepSpecDirectInvocation:
+    """Tests for StepSpec direct invocation."""
+
+    def test_basic_call(self):
+        s = SimpleStepSpec(use_cli=False)
+        s(text="world")
+        assert s.output == "WORLD"
+
+    def test_init_and_call(self):
+        m = InitCallStepSpec(factor=3)
+        m(value=5)
+        assert m.result == 150
+
+    def test_multiple_calls(self):
+        s = SimpleStepSpec(use_cli=False)
+        s(text="a")
+        assert s.output == "A"
+        s(text="b")
+        assert s.output == "B"
+
+    def test_init_state_persists_across_calls(self):
+        m = InitCallStepSpec(factor=5)
+        m(value=2)
+        assert m.result == 100  # 2 * (5*10)
+        m(value=3)
+        assert m.result == 150  # 3 * (5*10), init not re-run
+
+    def test_default_values(self):
+        s = SimpleStepSpec(use_cli=False)
+        s()  # use default text="hello"
+        assert s.output == "HELLO"
+
+    def test_config_kwargs_imply_direct_mode(self):
+        """Passing any kwarg should imply use_cli=False."""
+        m = InitCallStepSpec(factor=2)
+        m(value=3)
+        assert m.result == 60
+
+    def test_init_parameter_defaults(self):
+        """InitParameter defaults should be applied when no kwarg given."""
+        m = InitCallStepSpec(use_cli=False)  # factor defaults to 2
+        m(value=5)
+        assert m.result == 100  # 5 * (2*10)
+
+    def test_call_param_rejected_in_constructor(self):
+        """Passing a call-phase Parameter to the constructor should error."""
+        import pytest
+
+        with pytest.raises(TypeError):
+            SimpleStepSpec(text="wrong_place")
+
+
+# ---------------------------------------------------------------------------
+# Tests: StepSpec with Config parameters
+# ---------------------------------------------------------------------------
+
+
+class TestStepSpecWithConfig:
+    """Tests for StepSpec with Config parameters."""
+
+    def test_config_default(self):
+        from metaflow.user_configs.config_parameters import Config
+
+        class ConfigSpec(StepSpec):
+            cfg = Config("cfg", default_value={"key": "val"})
+
+            def call(self):
+                self.result = self.cfg
+
+        c = ConfigSpec(use_cli=False)
+        c()
+        assert c.result == {"key": "val"}
+
+    def test_config_override(self):
+        from metaflow.user_configs.config_parameters import Config
+
+        class ConfigSpec2(StepSpec):
+            cfg = Config("cfg", default_value={"key": "default"})
+
+            def call(self):
+                self.result = self.cfg
+
+        c = ConfigSpec2(cfg={"key": "override"})
+        c()
+        assert c.result == {"key": "override"}
